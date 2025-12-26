@@ -8,16 +8,21 @@ from datetime import datetime, timedelta
 # --- 1. 보안 설정 및 연결 ---
 def get_gcp_clients():
     creds_info = st.secrets["gcp_service_account"]
+    
+    # 권한 범위를 더 구체적으로 명시합니다.
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/calendar"
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/calendar.events"
     ]
     creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
-    
+
     # 연결 도구 생성
     gs_client = gspread.authorize(creds)
     calendar_service = build('calendar', 'v3', credentials=creds)
     return gs_client, calendar_service
+    
 
 # --- 2. 페이지 설정 ---
 st.set_page_config(page_title="스마트 스케줄러", layout="wide")
