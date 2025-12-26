@@ -1,98 +1,94 @@
 import streamlit as st
-import pandas as pd
+import gspread
+from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
 from datetime import datetime, timedelta
 
-# 1. 페이지 설정
-st.set_page_config(page_title="Smart Scheduler", layout="wide")
-
-# 데이터 저장 (간이 데이터베이스 역할 - 새로고침하면 초기화되므로 나중에는 DB 연결 필요)
-if 'events' not in st.session_state:
-    st.session_state.events = []
-if 'notifications' not in st.session_state:
-    st.session_state.notifications = []
-
-# --- 사이드바: 메뉴 이동 ---
-menu = st.sidebar.radio("메뉴 선택", ["일정 입력 및 분석", "내 캘린더", "할 일 리스트", "알림 센터"])
-
-# --- 1. 일정 입력 및 분석 (요청 2, 3번 반영) ---
-if menu == "일정 입력 및 분석":
-    st.title("➕ 새 일정 등록")
+# --- 1. 보안 설정 및 연결 (Secrets 활용) ---
+def get_gcp_clients():
+    # Streamlit Secrets에서 JSON 정보를 가져옴
+    creds_info = st.secrets["gcp_service_account"]
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/calendar"
+    ]
+    creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     
-    col1, col2 = st.columns(2)
+    # 시트 및 캘린더 서비스 빌드
+    gs_client = gspread.authorize(creds)
+    calendar_service = build('calendar', 'v3', credentials=creds)
+    return gs_client, calendar_service
+
+# --- 2. 페이지 디자인 설정 ---
+st.set_page_config(page_title="스마트 스케줄러", layout="wide")
+
+# 배경색 및 디자인을 위한 간단한 CSS
+st.markdown("""
+    <style>
+    .main { background-color: #f5f7f9; }
+    .stButton>button { width: 100%; border-radius: 5px; background-color: #4CAF50; color: white; }
+    .stTextInput>div>div>input { border-radius: 5px; }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.title("🚀 Smart Scheduler Pro")
+st.write("구글 시트 및 캘린더와 실시간으로 연동되는 일정 관리 앱입니다.")
+
+# --- 3. 데이터 로드 및 UI ---
+try:
+    gs_client, cal_service = get_gcp_clients()
     
-    with col1:
-        st.subheader("직접 입력")
-        title = st.text_input("일정 명")
-        category = st.selectbox("카테고리", ["회사", "개인"])
-        date = st.date_input("날짜 선택", datetime.now())
-        freq = st.selectbox("반복 설정", ["안 함", "매주", "매달", "매년"])
-        content = st.text_area("상세 내용")
+    # 구글 시트 열기 (본인의 시트 이름을 정확히 적으세요)
+    # 예: client.open("My Schedule Sheet").sheet1
+    sheet = gs_client.open_all()[0].sheet1 # 가장 최근에 만든 시트를 자동으로 엽니다.
+    
+    menu = st.sidebar.radio("메뉴", ["일정 등록", "캘린더 보기", "알림 및 요약"])
+
+    if menu == "일정 등록":
+        st.subheader("📝 새로운 일정 추가")
+        col1, col2 = st.columns(2)
         
-        if st.button("일정 추가"):
-            new_event = {"title": title, "category": category, "date": date, "freq": freq, "content": content}
-            st.session_state.events.append(new_event)
-            # 알림 추가 (요청 4번 반영)
-            st.session_state.notifications.append(f"🔔 '{title}' 일정이 등록되었습니다. ({date})")
-            st.success(f"'{title}' 일정이 저장되었습니다!")
-
-    with col2:
-        st.subheader("이메일 분석으로 등록")
-        email_text = st.text_area("이메일 본문을 붙여넣으세요", height=200)
-        if st.button("AI 분석 실행"):
-            st.info("이메일에서 일정을 추출 중입니다... (API 연결 대기)")
-            # 임시 데이터 추가
-            st.session_state.events.append({"title": "추출된 회의", "category": "회사", "date": datetime.now().date(), "freq": "안 함", "content": "메일 기반 생성"})
-
-# --- 2. 내 캘린더 (요청 1번 반영) ---
-elif menu == "내 캘린더":
-    st.title("📅 일정 확인")
-    
-    view_option = st.radio("보기 설정", ["전체 보기", "회사 일정만", "개인 일정만"], horizontal=True)
-    
-    df = pd.DataFrame(st.session_state.events)
-    
-    if not df.empty:
-        if view_option == "회사 일정만":
-            df = df[df['category'] == "회사"]
-        elif view_option == "개인 일정만":
-            df = df[df['category'] == "개인"]
-            
-        st.dataframe(df, use_container_width=True)
-    else:
-        st.write("등록된 일정이 없습니다.")
-
-# --- 3. 할 일 리스트 (요청 5번 반영) ---
-elif menu == "할 일 리스트":
-    st.title("📝 할 일 정리")
-    
-    today = datetime.now().date()
-    this_week = today + timedelta(days=7)
-    this_month = today + timedelta(days=30)
-    
-    df = pd.DataFrame(st.session_state.events)
-    
-    if not df.empty:
-        tab1, tab2, tab3 = st.tabs(["오늘", "이번 주", "이번 달"])
+        with col1:
+            title = st.text_input("일정 제목 (예: 팀 주간 회의)")
+            category = st.selectbox("카테고리", ["회사", "개인"])
+            date = st.date_input("날짜", datetime.now())
+            time = st.time_input("시간", datetime.now().time())
         
-        with tab1:
-            st.write("📍 오늘 할 일")
-            st.table(df[df['date'] == today])
-            
-        with tab2:
-            st.write("📍 이번 주 할 일")
-            st.table(df[(df['date'] >= today) & (df['date'] <= this_week)])
-            
-        with tab3:
-            st.write("📍 이번 달 할 일")
-            st.table(df[(df['date'] >= today) & (df['date'] <= this_month)])
-    else:
-        st.write("할 일이 없습니다.")
+        with col2:
+            freq = st.selectbox("반복", ["안 함", "매주", "매달", "매년"])
+            desc = st.text_area("상세 내용")
 
-# --- 4. 알림 센터 (요청 4번 반영) ---
-elif menu == "알림 센터":
-    st.title("🔔 알림 모아보기")
-    if st.session_state.notifications:
-        for note in reversed(st.session_state.notifications):
-            st.info(note)
-    else:
-        st.write("새로운 알림이 없습니다.")
+        if st.button("구글 시트 & 캘린더에 저장"):
+            # A. 구글 시트에 저장
+            row = [str(date), str(time), category, title, desc, freq]
+            sheet.append_row(row)
+            
+            # B. 구글 캘린더에 이벤트 생성
+            start_time = datetime.combine(date, time).isoformat()
+            end_time = (datetime.combine(date, time) + timedelta(hours=1)).isoformat()
+            
+            event = {
+                'summary': f"[{category}] {title}",
+                'description': desc,
+                'start': {'dateTime': start_time, 'timeZone': 'Asia/Seoul'},
+                'end': {'dateTime': end_time, 'timeZone': 'Asia/Seoul'},
+            }
+            
+            # primary는 기본 캘린더를 의미합니다.
+            cal_service.events().insert(calendarId='primary', body=event).execute()
+            
+            st.success(f"✅ '{title}' 일정이 구글 시트와 캘린더에 동시 등록되었습니다!")
+
+    elif menu == "캘린더 보기":
+        st.subheader("📅 저장된 일정 목록 (구글 시트 기준)")
+        data = sheet.get_all_records()
+        if data:
+            df = pd.DataFrame(data)
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.info("저장된 일정이 없습니다.")
+
+except Exception as e:
+    st.error(f"연결 중 오류가 발생했습니다: {e}")
+    st.info("1. 서비스 계정 이메일을 구글 시트/캘린더에 공유했는지 확인하세요.")
+    st.info("2. Streamlit Secrets에 JSON 내용을 올바르게 넣었는지 확인하세요.")
